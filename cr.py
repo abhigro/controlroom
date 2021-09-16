@@ -1,5 +1,5 @@
 #import liberary
-from flask import Flask,render_template,request,send_file
+from flask import Flask,render_template,request,send_file,make_response
 import pandas as pd
 
 #instance of an app
@@ -19,6 +19,11 @@ def monthly_upload():
 
 @app.route('/daily_app',methods=['POST'])
 def success():
+
+    global odf
+    global uppcl_df
+    global rural
+
 
     import pandas as pd
     import datetime as dt
@@ -92,6 +97,20 @@ def success():
         
     df.drop(lst,inplace=True)
 
+    xf=(df.pivot_table(index="FEEDER ID",columns="OUTAGE TYPE",values="TOTAL OUTAGE TIME",aggfunc="sum",margins=True)).fillna(value="0")
+    rf=pd.read_excel("Rural.xlsx")
+    rf.dropna(axis=1,inplace=True,how="all")
+    rf.dropna(axis=0,inplace=True,how="any")
+    rur_data=pd.merge(rf,xf,on="FEEDER ID",how="left").fillna(pd.Timedelta("0 days 00:00:01"))
+
+    rural=rur_data[["Feeder ","All"]]
+
+    rural["SUPPLY HOURS"]=pd.Timedelta("1 days")-rural["All"]
+
+    rural.drop(columns=["All"],inplace=True)
+
+    
+
     up_df=df[:]
     upp_df=up_df[(up_df["FEEDER TYPE"]!="Rural")]
     drop_list=upp_df[upp_df["OUTAGE TYPE"]=="SHUTDOWN"].index
@@ -109,7 +128,9 @@ def success():
     updf["Average Supply Hours"]=updf["All"]/avgdf["FEEDER TYPE"]
     updf["Supply Hours"]=pd.Timedelta("1 Days")-updf["Average Supply Hours"]
     uppcl_df=(updf.iloc[1:,[2]]["Supply Hours"])
-    uppcl_df.to_excel("UPPCL.xlsx")
+    
+    
+    
     
     t=df[df["OUTAGE TYPE"]=="SHUTDOWN"].index
     df_ws=df.drop(t)
@@ -135,7 +156,10 @@ def success():
     odf["AVG SUPPLY HOURS EXCLUDING SD"]["11KV RURAL"]=odf["AVG SUPPLY HOURS INCLUDING SD"]["11KV RURAL"]
     odf["AVG SUPPLY HOURS EXCLUDING SD"]["11KV MIXED"]=odf["AVG SUPPLY HOURS INCLUDING SD"]["11KV MIXED"]
 
-    odf.to_excel("outage.xlsx")
+    
+    
+    
+
 
 
 
@@ -145,17 +169,42 @@ def success():
     return render_template("daily_down.html")
 @app.route('/download1')
 def download_uppcl():
-    p1="C:\\Users\\abhis\\OneDrive\\Desktop\\myrepo\\data_science\\python\\deployment\\reports\\UPPCL.xlsx"
-    return send_file(p1,as_attachment=True)
+
+    resp=make_response(uppcl_df.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=uppcl.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+    
 
 @app.route('/download2')
 def download_outage():
-    p2="C:\\Users\\abhis\\OneDrive\\Desktop\\myrepo\\data_science\\python\\deployment\\reports\\outage.xlsx"
-    return send_file(p2,as_attachment=True)
+
+    resp=make_response(odf.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=outage.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+
+@app.route('/download3')
+def download_rural():
+
+    resp=make_response(rural.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=rural.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+    
 
 
 @app.route('/monthly_app',methods=['POST'])
 def success2():
+
+    global outage_11kv
+    global outage_33kv
 
     import pandas as pd
     import datetime as dt
@@ -301,15 +350,28 @@ def success2():
 
     return render_template("monthly_down.html")
 
-@app.route('/download3')
-def monthly_down_11kv():
-    p3="C:\\Users\\abhis\\OneDrive\\Desktop\\myrepo\\data_science\\python\\deployment\\reports\\Outage_Report[11 KV].xlsx"
-    return send_file(p3,as_attachment=True)
+    
 
 @app.route('/download4')
+def monthly_down_11kv():
+
+    resp=make_response(outage_11kv.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=otage11kv.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+    
+
+@app.route('/download5')
 def monthly_down_33kv():
-    p4="C:\\Users\\abhis\\OneDrive\\Desktop\\myrepo\\data_science\\python\\deployment\\reports\\Outage_Report[33 KV].xlsx"
-    return send_file(p4,as_attachment=True)
+    resp=make_response(outage_33kv.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=outage33kv.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+    
 
 
 
