@@ -7,30 +7,21 @@ app=Flask(__name__)
 
 @app.route('/' )
 def selection():
-    return render_template("selection.html")
+    return render_template("upload.html")
 
-@app.route('/daily')
-def daily_upload():
-    return render_template("daily_up.html")
-
-@app.route('/monthly')
-def monthly_upload():
-    return render_template("monthly_up.html")
-
-@app.route('/daily_app',methods=['POST'])
+@app.route('/processing',methods=['POST'])
 def success():
-
-    global odf
-    global uppcl_df
-    global rural
-
 
     import pandas as pd
     import datetime as dt
     import numpy as np
-    f=request.files['daily_export']
+    f=request.files['export']
     of=pd.read_excel(f)
-
+    global rural
+    global odf
+    global uppcl_df
+    global outage_11kv
+    global outage_33kv
 
     ff=pd.read_excel('Feeders.xlsx')
 
@@ -50,54 +41,64 @@ def success():
 
     off.dropna(how="any",axis=0,inplace=True)
 
-    df=off[:]
+    df_daily=off[off.columns]
+    df_monthly=off[off.columns]
 
-    for i in df[df["END DATE"]>df["START DATE"]].index:
-        df["END TIME"][i]=dt.time(hour=0,minute=0,second=0)
-
-
-
-    df["START DATE"]=df["START DATE"].astype('str')
-    df["END DATE"]=df["END DATE"].astype('str')
-    df["START TIME"]=df["START TIME"].astype('str')
-    df["END TIME"]=df["END TIME"].astype('str')
-    df["temp"]=" "
-    df["START TIME"]=df["START DATE"]+df["temp"]+df["START TIME"]
-    df["END TIME"]=df["END DATE"]+df["temp"]+df["END TIME"]
-    df.drop(columns=["START DATE","END DATE","temp"],inplace=True)
-    df["START TIME"]=pd.to_datetime(df["START TIME"])
-    df["END TIME"]=pd.to_datetime(df["END TIME"])
-
-    a=df.groupby("FEEDER DESC")
-    b=list(df["FEEDER DESC"].unique())
-
-    for i in b:
-        x=0
-        m=a.get_group(i).sort_values(by="START TIME")
-        for j,k in m.iterrows():
-            if(x>0):
-                if(df["START TIME"][j]<df["END TIME"][m]):
-                    df["START TIME"][j]=df["END TIME"][m]
-                if(df["END TIME"][j]<df["START TIME"][j]):
-                    df["END TIME"][j]=df["START TIME"][j]
-            
-               
-          
-                
-                
-            m=j
-            x+=1
+    for i in df_daily[df_daily["END DATE"]>df_daily["START DATE"]].index:
+        df_daily["END TIME"][i]=dt.time(hour=0,minute=0,second=0)
         
-    df["TOTAL OUTAGE TIME"]=df["END TIME"]-df["START TIME"]
-
-    lst=[]
-    for i,j in df.iterrows():
-        if df.loc[i]["TOTAL OUTAGE TIME"]==pd.Timedelta("0 days"):
-            lst.append(i)
+    for i,j in df_monthly.iterrows():
         
-    df.drop(lst,inplace=True)
+        if(df_monthly["END DATE"][i].month!=12):
+            if(df_monthly["END DATE"][i].month>df_monthly["START DATE"][i].month):
+                df_monthly["END DATE"][i]=dt.date(df["END DATE"][i].year,df["END DATE"][i].month+1,1)
+                df_monthly["END TIME"][i]=dt.time(hour=0,minute=0,second=0)
+        else:
+            if(df_monthly["END DATE"][i].month==1):
+                df_monthly["END DATE"][i]=dt.date(df["END DATE"][i].year+1,1,1)
+                df_monthly["END TIME"][i]=dt.time(hour=0,minute=0,second=0)
+    def df_modification(df): 
+        df["START DATE"]=df["START DATE"].astype('str')
+        df["END DATE"]=df["END DATE"].astype('str')
+        df["START TIME"]=df["START TIME"].astype('str')
+        df["END TIME"]=df["END TIME"].astype('str')
+        df["temp"]=" "
+        df["START TIME"]=df["START DATE"]+df["temp"]+df["START TIME"]
+        df["END TIME"]=df["END DATE"]+df["temp"]+df["END TIME"]
+        df.drop(columns=["START DATE","END DATE","temp"],inplace=True)
+        df["START TIME"]=pd.to_datetime(df["START TIME"])
+        df["END TIME"]=pd.to_datetime(df["END TIME"])
 
-    xf=(df.pivot_table(index="FEEDER ID",columns="OUTAGE TYPE",values="TOTAL OUTAGE TIME",aggfunc="sum",margins=True)).fillna(value="0")
+        a=df.groupby("FEEDER DESC")
+        b=list(df["FEEDER DESC"].unique())
+
+        for i in b:
+            x=0
+            m=a.get_group(i).sort_values(by="START TIME")
+            for j,k in m.iterrows():
+                if(x>0):
+                    if(df["START TIME"][j]<df["END TIME"][m]):
+                        df["START TIME"][j]=df["END TIME"][m]
+                    if(df["END TIME"][j]<df["START TIME"][j]):
+                        df["END TIME"][j]=df["START TIME"][j]
+
+                m=j
+                x+=1
+
+        df["TOTAL OUTAGE TIME"]=df["END TIME"]-df["START TIME"]
+
+        lst=[]
+        for i,j in df.iterrows():
+            if df.loc[i]["TOTAL OUTAGE TIME"]==pd.Timedelta("0 days"):
+                lst.append(i)
+
+        df.drop(lst,inplace=True)
+        return(df)
+
+    dfd=df_modification(df_daily)
+    dfm=df_modification(df_monthly)
+
+    xf=(dfd.pivot_table(index="FEEDER ID",columns="OUTAGE TYPE",values="TOTAL OUTAGE TIME",aggfunc="sum",margins=True)).fillna(value="0")
     rf=pd.read_excel("Rural.xlsx")
     rf.dropna(axis=1,inplace=True,how="all")
     rf.dropna(axis=0,inplace=True,how="any")
@@ -109,9 +110,9 @@ def success():
 
     rural.drop(columns=["All"],inplace=True)
 
-    
+   
 
-    up_df=df[:]
+    up_df=dfd[:]
     upp_df=up_df[(up_df["FEEDER TYPE"]!="Rural")]
     drop_list=upp_df[upp_df["OUTAGE TYPE"]=="SHUTDOWN"].index
     up_df.drop(drop_list,axis=0,inplace=True)
@@ -128,16 +129,14 @@ def success():
     updf["Average Supply Hours"]=updf["All"]/avgdf["FEEDER TYPE"]
     updf["Supply Hours"]=pd.Timedelta("1 Days")-updf["Average Supply Hours"]
     uppcl_df=(updf.iloc[1:,[2]]["Supply Hours"])
-    
-    
-    
-    
-    t=df[df["OUTAGE TYPE"]=="SHUTDOWN"].index
-    df_ws=df.drop(t)
+   
+        
+    t=dfd[dfd["OUTAGE TYPE"]=="SHUTDOWN"].index
+    df_ws=dfd.drop(t)
     ff_o=(ff.pivot_table(index="FEEDER CATEGORY",aggfunc="count"))
-    of_os=(df.pivot_table(index="FEEDER CATEGORY",values="TOTAL OUTAGE TIME",aggfunc="sum"))
+    of_os=(dfd.pivot_table(index="FEEDER CATEGORY",values="TOTAL OUTAGE TIME",aggfunc="sum"))
     of_ows=(df_ws.pivot_table(index="FEEDER CATEGORY",values="TOTAL OUTAGE TIME",aggfunc="sum"))
-    of_ocs=(df.pivot_table(index="FEEDER CATEGORY",values="TOTAL OUTAGE TIME",aggfunc="count"))
+    of_ocs=(dfd.pivot_table(index="FEEDER CATEGORY",values="TOTAL OUTAGE TIME",aggfunc="count"))
     of_ocws=(df_ws.pivot_table(index="FEEDER CATEGORY",values="TOTAL OUTAGE TIME",aggfunc="count"))
 
     odf=pd.DataFrame()
@@ -148,147 +147,19 @@ def success():
     odf["AVG SUPPLY HOURS EXCLUDING SD"]=pd.Timedelta("1 Days")-of_ows["TOTAL OUTAGE TIME"]/odf["FEEDER COUNT"]
     odf["OUTAGES COUNT EXCLUDING SHUTDOWN"]=of_ocws["TOTAL OUTAGE TIME"]
 
-    odf["OUTAGES COUNT INCLUDING SHUTDOWN"]["11KV RURAL"]=len(df[(df["OUTAGE TYPE"]!="LOAD SHEDDING") & (df["FEEDER CATEGORY"]=="11KV RURAL")])
-    odf["OUTAGES COUNT EXCLUDING SHUTDOWN"]["11KV RURAL"]=len(df[(df["OUTAGE TYPE"]!="LOAD SHEDDING") & (df["FEEDER CATEGORY"]=="11KV RURAL")])
-    odf["OUTAGES COUNT INCLUDING SHUTDOWN"]["11KV MIXED"]=len(df[(df["OUTAGE TYPE"]!="LOAD SHEDDING") & (df["FEEDER CATEGORY"]=="11KV MIXED")])
-    odf["OUTAGES COUNT EXCLUDING SHUTDOWN"]["11KV MIXED"]=len(df[(df["OUTAGE TYPE"]!="LOAD SHEDDING") & (df["FEEDER CATEGORY"]=="11KV MIXED")])
+    odf["OUTAGES COUNT INCLUDING SHUTDOWN"]["11KV RURAL"]=len(dfd[(dfd["OUTAGE TYPE"]!="LOAD SHEDDING") & (dfd["FEEDER CATEGORY"]=="11KV RURAL")])
+    odf["OUTAGES COUNT EXCLUDING SHUTDOWN"]["11KV RURAL"]=len(dfd[(dfd["OUTAGE TYPE"]!="LOAD SHEDDING") & (dfd["FEEDER CATEGORY"]=="11KV RURAL")])
+    odf["OUTAGES COUNT INCLUDING SHUTDOWN"]["11KV MIXED"]=len(dfd[(dfd["OUTAGE TYPE"]!="LOAD SHEDDING") & (dfd["FEEDER CATEGORY"]=="11KV MIXED")])
+    odf["OUTAGES COUNT EXCLUDING SHUTDOWN"]["11KV MIXED"]=len(dfd[(dfd["OUTAGE TYPE"]!="LOAD SHEDDING") & (dfd["FEEDER CATEGORY"]=="11KV MIXED")])
 
     odf["AVG SUPPLY HOURS EXCLUDING SD"]["11KV RURAL"]=odf["AVG SUPPLY HOURS INCLUDING SD"]["11KV RURAL"]
     odf["AVG SUPPLY HOURS EXCLUDING SD"]["11KV MIXED"]=odf["AVG SUPPLY HOURS INCLUDING SD"]["11KV MIXED"]
 
-    
-    
-    
 
-
-
-
-
-
-
-    return render_template("daily_down.html")
-@app.route('/download1')
-def download_uppcl():
-
-    resp=make_response(uppcl_df.to_csv())
-    
-    resp.headers["Content-Disposition"]=("attachment;filename=uppcl.csv")
-    resp.headers["Content-Type"]="text/csv"
-
-    return (resp)
     
 
-@app.route('/download2')
-def download_outage():
-
-    resp=make_response(odf.to_csv())
-    
-    resp.headers["Content-Disposition"]=("attachment;filename=outage.csv")
-    resp.headers["Content-Type"]="text/csv"
-
-    return (resp)
-
-@app.route('/download3')
-def download_rural():
-
-    resp=make_response(rural.to_csv())
-    
-    resp.headers["Content-Disposition"]=("attachment;filename=rural.csv")
-    resp.headers["Content-Type"]="text/csv"
-
-    return (resp)
-    
-
-
-@app.route('/monthly_app',methods=['POST'])
-def success2():
-
-    global outage_11kv
-    global outage_33kv
-
-    import pandas as pd
-    import datetime as dt
-    import numpy as np
-    f=request.files['monthly_export']
-    of=pd.read_excel(f)
-
-
-    ff=pd.read_excel('Feeders.xlsx')
-
-    of.drop(columns=['SUBSTATION','SUBSTATION DESC','OUTAGE ID','STATUS','TOTAL OUTAGE TIME','AGGREGATE TIME',"REASON",'REASON DESCRIPTION','REMARKS','LOCATION','STAND BY FEEDER','SUBTOTAL AGG.',"FEEDER TYPE"],inplace=True)
-
-    of["FEEDER DESC"]=of["FEEDER DESC"].astype(str)
-    of.drop(list(of[of["FEEDER DESC"]=="nan"].index),inplace=True)
-
-    ff.drop(columns=["SI. No."],inplace=True)
-
-    off=pd.merge(of,ff,on="FEEDER ID",how="left")
-
-
-    off.drop(columns=["FEEDER DESC_x"],inplace=True)
-    off.rename(columns={"FEEDER DESC_y":"FEEDER DESC"},inplace=True)
-
-
-    off.dropna(how="any",axis=0,inplace=True)
-
-    df=off[:]
-
-    for i,j in df.iterrows():
-    
-        if(df["END DATE"][i].month!=12):
-            if(df["END DATE"][i].month>df["START DATE"][i].month):
-                df["END DATE"][i]=dt.date(df["END DATE"][i].year,df["END DATE"][i].month+1,1)
-                df["END TIME"][i]=dt.time(hour=0,minute=0,second=0)
-        else:
-            if(df["END DATE"][i].month==1):
-                df["END DATE"][i]=dt.date(df["END DATE"][i].year+1,1,1)
-                df["END TIME"][i]=dt.time(hour=0,minute=0,second=0)
-        
-
-
-
-    df["START DATE"]=df["START DATE"].astype('str')
-    df["END DATE"]=df["END DATE"].astype('str')
-    df["START TIME"]=df["START TIME"].astype('str')
-    df["END TIME"]=df["END TIME"].astype('str')
-    df["temp"]=" "
-    df["START TIME"]=df["START DATE"]+df["temp"]+df["START TIME"]
-    df["END TIME"]=df["END DATE"]+df["temp"]+df["END TIME"]
-    df.drop(columns=["START DATE","END DATE","temp"],inplace=True)
-    df["START TIME"]=pd.to_datetime(df["START TIME"])
-    df["END TIME"]=pd.to_datetime(df["END TIME"])
-
-    a=df.groupby("FEEDER DESC")
-    b=list(df["FEEDER DESC"].unique())
-
-    for i in b:
-        x=0
-        m=a.get_group(i).sort_values(by="START TIME")
-        for j,k in m.iterrows():
-            if(x>0):
-                if(df["START TIME"][j]<df["END TIME"][m]):
-                    df["START TIME"][j]=df["END TIME"][m]
-                if(df["END TIME"][j]<df["START TIME"][j]):
-                    df["END TIME"][j]=df["START TIME"][j]
-            
-               
-          
-                
-                
-            m=j
-            x+=1
-        
-    df["TOTAL OUTAGE TIME"]=df["END TIME"]-df["START TIME"]
-
-    lst=[]
-    for i,j in df.iterrows():
-        if df.loc[i]["TOTAL OUTAGE TIME"]==pd.Timedelta("0 days"):
-            lst.append(i)
-        
-    df.drop(lst,inplace=True)
-
-    xf=(df.pivot_table(index="FEEDER ID",columns="OUTAGE TYPE",values="TOTAL OUTAGE TIME",aggfunc="sum",margins=True)).fillna(value=pd.Timedelta("0 days"))
-    xff=(df.pivot_table(index="FEEDER ID",columns="OUTAGE TYPE",values="TOTAL OUTAGE TIME",aggfunc="count",margins=True)).fillna(value=0)
+    xf=(dfm.pivot_table(index="FEEDER ID",columns="OUTAGE TYPE",values="TOTAL OUTAGE TIME",aggfunc="sum",margins=True)).fillna(value=pd.Timedelta("0 days"))
+    xff=(dfm.pivot_table(index="FEEDER ID",columns="OUTAGE TYPE",values="TOTAL OUTAGE TIME",aggfunc="count",margins=True)).fillna(value=0)
 
     kv11_df=pd.read_excel("Monthly_11 kV_Feeders.xlsx")
     kv33_df=pd.read_excel("Monthly_33 kV_Feeders.xlsx")
@@ -345,34 +216,72 @@ def success2():
     outage_33kv["TOTAL COUNT"]=kv33_df_c["All"]
     outage_33kv["TOTAL duration"]=kv33_df_s["All"]
 
-    outage_11kv.to_excel("Outage_Report[11 KV].xlsx")
-    outage_33kv.to_excel("Outage_Report[33 KV].xlsx")
+    
+    return render_template("selection.html")
 
+@app.route('/daily')
+def daily_d():
+    return render_template("daily_down.html")
+
+@app.route('/download1')
+def download_uppcl():
+
+    resp=make_response(uppcl_df.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=uppcl.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+
+@app.route('/download2')
+def download_outage():
+
+    resp=make_response(odf.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=outage.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+@app.route('/download3')
+def download_rural():
+
+    resp=make_response(rural.to_csv())
+    
+    resp.headers["Content-Disposition"]=("attachment;filename=rural.csv")
+    resp.headers["Content-Type"]="text/csv"
+
+    return (resp)
+
+
+@app.route('/monthly')
+def daily_m():
     return render_template("monthly_down.html")
 
-    
 
 @app.route('/download4')
 def monthly_down_11kv():
 
     resp=make_response(outage_11kv.to_csv())
     
-    resp.headers["Content-Disposition"]=("attachment;filename=otage11kv.csv")
+    resp.headers["Content-Disposition"]=("attachment;filename=11kv.csv")
     resp.headers["Content-Type"]="text/csv"
 
     return (resp)
-    
 
 @app.route('/download5')
 def monthly_down_33kv():
+
     resp=make_response(outage_33kv.to_csv())
     
-    resp.headers["Content-Disposition"]=("attachment;filename=outage33kv.csv")
+    resp.headers["Content-Disposition"]=("attachment;filename=33kv.csv")
     resp.headers["Content-Type"]="text/csv"
 
     return (resp)
-    
 
+
+
+
+    
 
 
 
